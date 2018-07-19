@@ -136,34 +136,6 @@ class EnsKF(object):
         print("--- %s seconds ---" % (time.time() - start_time))
 
 
-        if 0:
-            chunk_zise = self.chunk_zise
-            while end_of_ensemble:
-                print "Percent Finished is {}".format(100.0*row_start/float(nn))
-                if nn > row_start + chunk_zise:
-                    row_end = row_start + chunk_zise
-                else:
-                    row_end = nn
-                    end_of_ensemble = 0
-
-                k_s = K[row_start:row_end,:]
-                n,N = k_s.shape
-                k_s_dash = k_s - np.mean(k_s, axis=1).reshape((n, 1))
-                hdash = h_dash.value.transpose()
-
-                #  Dot prodcut
-                Chk = scipy.linalg.blas.dgemm(alpha=1.0, a=k_s_dash, b=hdash)/ (N - 1)
-                Chk_dot_Cinv = scipy.linalg.blas.dgemm(alpha=1.0, a=Chk, b=Cinv)
-                Chk = None
-                del_k = scipy.linalg.blas.dgemm(alpha=1.0, a=Chk_dot_Cinv, b=d_dash)
-                k_a[row_start:row_end,:] = k_s + del_k
-                h5_object.flush()
-                row_start = row_end
-            pass
-
-
-
-
     def update(self):
         """
 
