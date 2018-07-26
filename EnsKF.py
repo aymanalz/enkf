@@ -17,8 +17,9 @@ class EnsKF(object):
 
     Mathematical Notations:
     * Consider a model that accepts K as an input and produces H as an output  H = G(K)
-    * An esemble of K's is used to produce an esemble of H's.
-    * The forcast matrix (Af) can be formed as Af = [[Hs],[Ks]]
+    * An ensemble of K's is used to produce an ensemble of H's.
+    * Model response (or states) H matrix contains only model observables (observed head or observed conductivity)
+    * Model Parameters K contains all static parameters or dynamic parameters to be filtered. 
 
 
     ## Illustrative Example
