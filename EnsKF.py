@@ -1,33 +1,82 @@
-import sys, os
+__version__ = 0.0
+__Date__ = "7/25/2018"
+
+
 import numpy as np
-import matplotlib.pyplot as plt
 import scipy.linalg.blas
 import dask.array as da
 from dask import delayed
 import time
+
 class EnsKF(object):
-    def __init__(self, Af=None, cf = None):
-        self.Af = Af
-        self.Cf = cf
-        self.H = 1 # should be a vector of observed data
-        self.rseed = None
-        self.dseed = None
-        self.add_error_to_inovation_mat = False
+    """
+    Ensemble Kalman Filter
+    ----------------------
+    A class to implement to the update stage for Ensemble Kalman Filter, Ensemble Smoother, and Ensemble Kalman
+    Smoother.
+
+    Mathematical Notations:
+    * Consider a model that accepts K as an input and produces H as an output  H = G(K)
+    * An esemble of K's is used to produce an esemble of H's.
+    * The forcast matrix (Af) can be formed as Af = [[Hs],[Ks]]
+
+
+    ## Illustrative Example
+    -----------
+    import EnKF
+    kf = EnKF()
+
+    # The hdf database "hdf_file.h5" contains the
+    kf.hdf = h5py.File('Monte_carlo_simulation_dataset.h5', 'a')
+    kf.observations = hdf.get('obs')  # observation vector
+    kf.parameters = hdf.get('k_ens')  # parameter ensemble
+    kf.states = hdf.get('h_ens')      # states ensemble
+    kf.obs_error = eps                # Observation Error vector
+    kf.err_is_perc = False            # How error obs_error should be interpreted; either percentage of the prior
+                                        variance  or abolute error value
+    kf.trunc_method = 'eign_num'      # define how TSVD is com[uted: either as percentage of the number of eigenvalues
+                                       'eign_num', or percentation of the summation of eigenvalues
+    kf.trunc_value = cut              # Truncation threshold value.
+    kf.chunk_zise = 5000              # chunck size to pull from the hdf file
+
+    # Implement the Update
+    kf.update_parallel()
+
+    # The posterior Ensemble is
+    kk_update = hdf.get('kk_update')
+
+    """
+    def __init__(self, hdf = None, states = None, parameters = None, observations = None):
+        """
+
+        :param :
+        hdf :       h5 file that contains the Monte Carlo Simulation results
+        states:     A matrix (within hdf) that contains the model observable response
+        parameters: A matrix that contains model parameters; for example hydraulic conductivity. Also the matrix may
+                    contain any model responce that is not observed and needs to be estimated or predicted.
+        rseed :     seed number for error generation --- TODO: not active
+        dseed:      seed number for observation noise ---- TODO: not active
+
+        :param :
+        """
+        self.states = states
+        self.parameters = parameters
+        self.observations = observations
+        self.hdf = hdf
+        self.rseed = 123
+        self.dseed = 456
+        self.add_error_to_innovation_mat = False
         self.compute_R_from_ensemble = False
         self.err_is_perc = True
         self.chunk_zise = 500
         self.obs_error = 1e-3
         self.trunc_method = 'eign_perc' # eign_num
         self.trunc_value = 1e-3
-        self.states = None
-        self.parameters = None
-        self.observations = None
-        self.hdf = None
-        pass
+        self.save_intermediate_matrices = False
 
     def update_parallel(self):
         """
-
+         parallelization is implemented by DASK
         :param H: is the observable ensemble
         :param K: is the parameter  ensemble
         :param d:
@@ -47,7 +96,7 @@ class EnsKF(object):
 
         # Compute deviation of model predictions around ensemble mean
         h_dash = H - np.mean(H, axis=1).reshape((m, 1))
-        if 0:
+        if self.save_intermediate_matrices:  # TODO: Have not tested
             if not h5_object == None:
                 try:
                     h5_object.__delitem__('h_dash')
@@ -60,7 +109,7 @@ class EnsKF(object):
         eps = self.obs_error
         if self.err_is_perc:
             #if self.rseed:
-            #    np.random.seed(self.rseed)
+            #    np.random.seed(self.rseed) #TODO: activate & test
             R = 0.0 + (eps/100.0) * np.std(H, axis=1)
             R =  da.from_array(R, chunks = self.chunk_zise)
             R = da.diag(R)
@@ -85,7 +134,7 @@ class EnsKF(object):
         Cinv = da.from_array(Cinv, chunks=(self.chunk_zise, self.chunk_zise))
 
         #Cinv, eig_val = self.pinv2(Chh, self.cutoff_percent)
-        if 0:
+        if self.save_intermediate_matrices:  # TODO: Have not tested
             if not h5_object== None:
                 try:
                     h5_object.__delitem__('Cinv')
@@ -103,13 +152,13 @@ class EnsKF(object):
         Chh = None
 
         # compute inovation; inovation is deviation of model prediction from obsevation
-        if self.add_error_to_inovation_mat:
+        if self.add_error_to_innovation_mat:
             if self.dseed:
                 np.random.seed(self.dseed)
             d_dash = d.value.reshape(m, 1) + (eps / 100.0) * np.random.randn(m, N) - H
         else:
             d_dash = d.reshape(m, 1) - H
-        if 0:
+        if self.save_intermediate_matrices:  # TODO: Have not tested :
             if not h5_object == None:
                 try:
                     h5_object.__delitem__('d_dash')
@@ -119,10 +168,8 @@ class EnsKF(object):
                 d_dash = h5_object['d_dash']
 
         # flush memory
-        #h5_object.flush()
-        end_of_ensemble = 1.0
-        row_start = 0
-        #k_a = h5_object['k_update']
+        if self.save_intermediate_matrices:  # TODO: Have not tested
+            h5_object.flush()
 
         # compute update
         K_s_dash = K - K.mean(axis = 1).reshape((nn,1))
@@ -130,8 +177,9 @@ class EnsKF(object):
         Chk_dot_Cinv = Chk.dot(Cinv)
         del_k = Chk_dot_Cinv.dot(d_dash)
         k_a = K + del_k
+
+        # DASK will delay all calculation till this moment
         start_time = time.time()
-        #k_a.to_hdf5(self.hdf, 'update')
         k_a.to_hdf5(self.hdf.filename, 'kk_update', compression='lzf', shuffle=True)
         print("--- %s seconds ---" % (time.time() - start_time))
 
@@ -213,7 +261,7 @@ class EnsKF(object):
         Chh = None
 
         # compute inovation; inovation is deviation of model prediction from obsevation
-        if self.add_error_to_inovation_mat:
+        if self.add_error_to_innovation_mat:
             if self.dseed:
                 np.random.seed(self.dseed)
             d_dash = d.value.reshape(m, 1) + (eps / 100.0) * np.random.randn(m, N) - H
@@ -257,38 +305,14 @@ class EnsKF(object):
             k_a[row_start:row_end,:] = k_s + del_k
             h5_object.flush()
             row_start = row_end
-        pass
-
-
-
-    def update_0(self, A, D, H,  err_perc, cutoff):
-
-        n, N = A.shape()
-        D_dash = D - np.dot(H,A)
-        N_1 = (1.0/N) * np.ones((N,N),dtype=float)
-        I = np.eye(N,N)
-        A_dash = np.dot(A,(I-N_1))
-        S = np.dot(H,A)
-        del(A_dash, H)
-        m, N = np.shape(S)
-        C = np.dot(S,S)
-        errVar = C/(N-1)
-        errVar = np.diag(np.diag(errVar))
-        ErrSTD = np.power(errVar,0.5)
-        ErrSTD = ErrSTD * err_perc
-        D_dash = D_dash + np.diag(ErrSTD)
-        C = C + ErrSTD
-        del(Ce)
-        if self.trunc_method == 'eign_perc':
-            C_inv, eig_val = self.pinv2(C, self.trunc_value)
-        elif self.trunc_method == 'eign_num':
-            C_inv, eig_val = self.pinv_numeig(C, self.trunc_value)
-
-        X = I + np.dot(S.transpose(),np.dot(C_inv,D_dash))
-        A_U = np.dot(A , X)
-
 
     def pinv2(self, a, cut_percentage):
+        """
+        Compute the pseudoinverse of the observation covariance matrix
+        :param a:
+        :param cut_percentage:
+        :return:
+        """
 
         a = a.conjugate()
         u, s, vt = np.linalg.svd(a, 0)
@@ -308,32 +332,33 @@ class EnsKF(object):
         return res, eig_val
 
     def pinv_numeig_dask(self, a, num_eig):
-        """Cut the lowest number of eigne values"""
+        """
+        Compute the pseudoinverse of the observation covariance matrix
+        """
 
-        print("Inverting the measurement covariance matrix")
+        print("Inverting the measurement covariance matrix.....")
         a = a.conj()
         u, s, vt = np.linalg.svd(a, 0)
         eig_val = np.copy(s)
-
         neig = int((len(s)*num_eig)/100.0)
-
         s = 1.0/s
+
         # force the last num_eig values to be zeros
         s[neig:] = 0.0
         res = np.dot(np.transpose(vt), np.multiply(s[:, np.newaxis], np.transpose(u)))
-
         return res, eig_val
 
     def pinv_numeig(self, a, num_eig):
-        """Cut the lowest number of eigne values"""
+        """
+        Compute the pseudoinverse of the observation covariance matrix
+        """
 
         a = a.conjugate()
         u, s, vt = np.linalg.svd(a, 0)
         eig_val = np.copy(s)
-
         neig = int((len(s)*num_eig)/100.0)
-
         s = 1.0/s
+
         # force the last num_eig values to be zeros
         s[neig:] = 0.0
         res = np.dot(np.transpose(vt), np.multiply(s[:, np.newaxis], np.transpose(u)))
@@ -343,7 +368,5 @@ class EnsKF(object):
 
 
 if __name__=="__main__":
-
-
     pass
 
